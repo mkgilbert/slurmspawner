@@ -148,12 +148,14 @@ $cmd
         popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         node_name = popen.communicate()[0].strip().decode() # convett bytes object to string
         # now get the ip address of the node name
+        if node_name in (None, ""):
+            return (None, None)
         cmd = 'host %s' % node_name
         popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         out = popen.communicate()[0].strip().decode()
         node_ip = out.split(' ')[-1] # the last portion of the output should be the ip address
 
-        return node_ip
+        return (node_ip, node_name)
 
     @gen.coroutine
     def start(self):
@@ -184,7 +186,7 @@ $cmd
 
         #time.sleep(2)
         job_state = self._check_slurm_job_state()
-        for i in range(15):
+        for i in range(5):
             self.log.info("job_state is %s" % job_state)
             if 'RUNNING' in job_state:
                 break
@@ -195,10 +197,11 @@ $cmd
                 self.log.info("Job %s failed to start!" % self.slurm_job_id)
                 return 1 # is this right? Or should I not return, or return a different thing?
         
-        notebook_ip = self.get_slurm_job_info(self.slurm_job_id)
-
-        self.user.server.ip = notebook_ip 
-        self.log.info("Notebook server ip is %s" % self.user.server.ip)
+        node_ip, node_name  = self.get_slurm_job_info(self.slurm_job_id)
+        if node_ip is None or node_name is None:
+            return 1 # slurm job didn't submit
+        self.user.server.ip = node_ip 
+        self.log.info("Notebook server running on %s (%s)" % (node_name, node_ip))
 
     @gen.coroutine
     def poll(self):
