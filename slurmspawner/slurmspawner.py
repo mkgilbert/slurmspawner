@@ -9,6 +9,7 @@ import pipes
 from subprocess import Popen, call
 import subprocess
 from string import Template
+from concurrent.futures import ThreadPoolExecutor
 
 from tornado import gen
 
@@ -29,53 +30,19 @@ def run_command(cmd):
         out = out[0].decode().strip()
         return out
 
-def get_slurm_job_info(jobid):
-    """returns ip address of node that is running the job"""
-    cmd = 'squeue -h -j ' + jobid + ' -o %N'
-    print(cmd)
-    popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    node_name = popen.communicate()[0].strip().decode() # convett bytes object to string
-    # now get the ip address of the node name
-    cmd = 'host %s' % node_name
-    print(cmd)
-    popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    out = popen.communicate()[0].strip().decode()
-    node_ip = out.split(' ')[-1] # the last portion of the output should be the ip address
 
-    return node_ip
-
-def run_jupyterhub_singleuser(cmd, user):
-    sbatch = Template('''#!/bin/bash
-#SBATCH --partition=$queue
-#SBATCH --time=$hours:00:00
-#SBATCH -o /home/$user/jupyterhub_slurmspawner_%j.log
-#SBATCH --job-name=spawner-jupyterhub
-#SBATCH --workdir=/home/$user
-#SBATCH --mem=$mem
-###SBATCH --export=ALL
-#SBATCH --uid=$user
-#SBATCH --get-user-env=L
-
-which jupyterhub-singleuser
-$export_cmd
-$cmd
-    ''')
-
-    queue = "all"
-    mem = '200'
-    hours = '2'
-    full_cmd = cmd.split(';')
-    export_cmd = full_cmd[0]
-    cmd = full_cmd[1]
-    sbatch = sbatch.substitute(dict(export_cmd=export_cmd, cmd=cmd, queue=queue, mem=mem, hours=hours, user=user))
-    #serialsbatch+='cd %s' % "notebooks"
-    print('Submitting *****{\n%s\n}*****' % sbatch)
-    popen = subprocess.Popen('sbatch', shell = True, stdin = subprocess.PIPE, stdout = subprocess.PIPE)
-    out = popen.communicate(sbatch.encode())[0].strip() #e.g. something like "Submitted batch job 209"
-    return out
 
 class SlurmSpawner(Spawner):
     """A Spawner that just uses Popen to start local processes."""
+
+    _executor = None
+    @property
+    def executor(self):
+        """single global executor"""
+        cls = self.__class__
+        if cls._executor is None:
+            cls._executor = ThreadPoolExecutor(1)
+        return cls._executor
 
     INTERRUPT_TIMEOUT = Integer(1200, config=True, \
         help="Seconds to wait for process to halt after SIGINT before proceeding to SIGTERM"
@@ -137,6 +104,55 @@ class SlurmSpawner(Spawner):
         self.log.info("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
         return out
 
+    def run_jupyterhub_singleuser(self, cmd, user):
+        """ 
+        Wrapper for calling run_jupyterhub_singleuser to be passed to ThreadPoolExecutor..
+        """
+        args = [cmd, user]
+        return self.executor.submit(self._run_jupyterhub_singleuser, *args)
+
+    def _run_jupyterhub_singleuser(self, cmd, user):
+        sbatch = Template('''#!/bin/bash
+#SBATCH --partition=$queue
+#SBATCH --time=$hours:00:00
+#SBATCH -o /home/$user/jupyterhub_slurmspawner_%j.log
+#SBATCH --job-name=spawner-jupyterhub
+#SBATCH --workdir=/home/$user
+#SBATCH --mem=$mem
+#SBATCH --uid=$user
+#SBATCH --get-user-env=L
+
+which jupyterhub-singleuser
+$export_cmd
+$cmd
+        ''')
+
+        queue = "all"
+        mem = '200'
+        hours = '2'
+        full_cmd = cmd.split(';')
+        export_cmd = full_cmd[0]
+        cmd = full_cmd[1]
+        sbatch = sbatch.substitute(dict(export_cmd=export_cmd, cmd=cmd, queue=queue, mem=mem, hours=hours, user=user))
+        #serialsbatch+='cd %s' % "notebooks"
+        print('Submitting *****{\n%s\n}*****' % sbatch)
+        popen = subprocess.Popen('sbatch', shell = True, stdin = subprocess.PIPE, stdout = subprocess.PIPE)
+        out = popen.communicate(sbatch.encode())[0].strip() #e.g. something like "Submitted batch job 209"
+        return out
+
+    def get_slurm_job_info(self, jobid):
+        """returns ip address of node that is running the job"""
+        cmd = 'squeue -h -j ' + jobid + ' -o %N'
+        popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        node_name = popen.communicate()[0].strip().decode() # convett bytes object to string
+        # now get the ip address of the node name
+        cmd = 'host %s' % node_name
+        popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        out = popen.communicate()[0].strip().decode()
+        node_ip = out.split(' ')[-1] # the last portion of the output should be the ip address
+
+        return node_ip
+
     @gen.coroutine
     def start(self):
         """Start the process"""
@@ -153,7 +169,7 @@ class SlurmSpawner(Spawner):
             cmd.insert(0, 'export %s="%s";' % (k, env[k]))
         #self.pid, stdin, stdout, stderr = execute(self.channel, ' '.join(cmd))
         
-        output = run_jupyterhub_singleuser(' '.join(cmd), self.user.name)
+        output = yield self.run_jupyterhub_singleuser(' '.join(cmd), self.user.name)
         output = output.decode() # convert bytes object to string
         self.log.debug("Stdout of trying to call run_jupyterhub_singleuser(): %s" % output)
         self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
@@ -177,7 +193,7 @@ class SlurmSpawner(Spawner):
                 self.log.info("Job %s failed to start!" % self.slurm_job_id)
                 return 1 # is this right? Or should I not return, or return a different thing?
         
-        notebook_ip = get_slurm_job_info(self.slurm_job_id)
+        notebook_ip = self.get_slurm_job_info(self.slurm_job_id)
 
         self.user.server.ip = notebook_ip 
         self.log.info("Notebook server ip is %s" % self.user.server.ip)
@@ -212,13 +228,12 @@ class SlurmSpawner(Spawner):
         if `now`, skip waiting for clean shutdown
         """
         status = yield self.poll()
-        self.log.info("*** Stopping notebook for user %s. Status is currently %s ****" % (self.user.name, status))
         if status is not None:
             # job is not running
             return
 
         cmd = 'scancel ' + self.slurm_job_id
-        self.log.info("cancelling job %s" % self.slurm_job_id)
+        self.log.info("Cancelling slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
 
         job_state = run_command(cmd)
         
@@ -231,5 +246,4 @@ class SlurmSpawner(Spawner):
 
 
 if __name__ == "__main__":
-
-        run_jupyterhub_singleuser("jupyterhub-singleuser", 3434)
+    pass
