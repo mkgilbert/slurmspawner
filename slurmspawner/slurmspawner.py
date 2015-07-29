@@ -3,7 +3,6 @@ import signal
 import errno
 import pwd
 import os
-import getpass
 import time
 import pipes
 from subprocess import Popen, call
@@ -13,13 +12,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 from tornado import gen
 
-from jupyterhub.spawner import Spawner
 from traitlets import (
     Instance, Integer, Unicode
 )
 
-from jupyterhub.utils import random_port
+from jupyterhub.spawner import Spawner
 from jupyterhub.spawner import set_user_setuid
+from jupyterhub.utils import random_port
+
 
 def run_command(cmd):
     popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -29,7 +29,6 @@ def run_command(cmd):
     else:
         out = out[0].decode().strip()
         return out
-
 
 
 class SlurmSpawner(Spawner):
@@ -112,6 +111,9 @@ class SlurmSpawner(Spawner):
         return self.executor.submit(self._run_jupyterhub_singleuser, *args)
 
     def _run_jupyterhub_singleuser(self, cmd, user):
+        """
+        Submits a slurm sbatch script to start jupyterhub-singleuser
+        """
         sbatch = Template('''#!/bin/bash
 #SBATCH --partition=$queue
 #SBATCH --time=$hours:00:00
@@ -131,7 +133,7 @@ $cmd
         mem = '200'
         hours = '2'
         full_cmd = cmd.split(';')
-        export_cmd = full_cmd[0]
+        export_cmd = full_cmd[0] 
         cmd = full_cmd[1]
         sbatch = sbatch.substitute(dict(export_cmd=export_cmd, cmd=cmd, queue=queue, mem=mem, hours=hours, user=user))
         #serialsbatch+='cd %s' % "notebooks"
@@ -182,7 +184,7 @@ $cmd
 
         #time.sleep(2)
         job_state = self._check_slurm_job_state()
-        for i in range(10):
+        for i in range(15):
             self.log.info("job_state is %s" % job_state)
             if 'RUNNING' in job_state:
                 break
