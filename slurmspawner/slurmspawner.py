@@ -100,7 +100,7 @@ class SlurmSpawner(Spawner):
         # check sacct to see if the job is still running
         cmd = 'squeue -h -j ' + self.slurm_job_id + ' -o %T'
         out = run_command(cmd)
-        self.log.info("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
+        self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
         return out
 
     def run_jupyterhub_singleuser(self, cmd, user):
