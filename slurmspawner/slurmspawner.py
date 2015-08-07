@@ -38,6 +38,7 @@ class SlurmSpawner(Spawner):
     @property
     def executor(self):
         """single global executor"""
+        self.log.debug("Running executor...")
         cls = self.__class__
         if cls._executor is None:
             cls._executor = ThreadPoolExecutor(1)
@@ -90,7 +91,51 @@ class SlurmSpawner(Spawner):
     def _env_default(self):
         env = super()._env_default()
         return self.user_env(env)
+    
+    @gen.coroutine
+    def stop_slurm_job(self):
+        """Wrapper to call _stop_slurm_job() to be passed to ThreadPoolExecutor"""
+        is_stopped = yield self.executor.submit(self._stop_slurm_job)
+        return is_stopped
+         
+    def _stop_slurm_job(self):
+        if self.slurm_job_id in (None, ""):
+            self.log.warn("Slurm job id for user %s isn't defined!" % (self.user.name))
+            return True
 
+        cmd = 'scancel ' + self.slurm_job_id
+        self.log.info("Cancelling slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
+
+        job_state = run_command(cmd)
+        time.sleep(1)
+        if job_state in ("CANCELLED", "COMPLETED", "FAILED", "COMPLETING"):
+            return True
+        else:
+            #status = yield self.poll()
+            #if status is None:
+            #    self.log.warn("Job %s never cancelled" % self.slurm_job_id)
+            return False
+
+    #@gen.coroutine
+    #def check_slurm_job_state(self):
+    #    """Wrapper for calling _check_slurm_job_state() to be passed to ThreadPoolExecutor..."""
+    #    self.log.debug("Checking slurm job %s" % self.slurm_job_id)
+    #    status = yield self.executor.submit(self._check_slurm_job_state)
+    #    return status
+
+    def check_slurm_job_state(self):
+        self.log.debug("Checking slurm job %s" % self.slurm_job_id)
+        if self.slurm_job_id in (None, ""):
+            # job has been cancelled or failed, so don't even try the squeue command. This is because
+            # squeue will return RUNNING if you submit something like `squeue -h -j -o %T` and there's
+            # at least 1 job running
+            return ""
+        # check sacct to see if the job is still running
+        cmd = 'squeue -h -j ' + self.slurm_job_id + ' -o %T'
+        out = run_command(cmd)
+        self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
+        return out
+        
     def _check_slurm_job_state(self):
         if self.slurm_job_id in (None, ""):
             # job has been cancelled or failed, so don't even try the squeue command. This is because
@@ -103,17 +148,21 @@ class SlurmSpawner(Spawner):
         self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
         return out
 
+    @gen.coroutine
     def run_jupyterhub_singleuser(self, cmd, user):
         """ 
         Wrapper for calling run_jupyterhub_singleuser to be passed to ThreadPoolExecutor..
         """
         args = [cmd, user]
-        return self.executor.submit(self._run_jupyterhub_singleuser, *args)
+        self.log.debug("Now we're in the run_jupyterhub_singleuser method...")
+        server = yield self.executor.submit(self._run_jupyterhub_singleuser, *args)
+        return server
 
     def _run_jupyterhub_singleuser(self, cmd, user):
         """
         Submits a slurm sbatch script to start jupyterhub-singleuser
         """
+        self.log.debug("Now we're in the jupyterhub_singleuser method...")
         sbatch = Template('''#!/bin/bash
 #SBATCH --partition=$queue
 #SBATCH --time=$hours:00:00
@@ -128,7 +177,8 @@ which jupyterhub-singleuser
 $export_cmd
 $cmd
         ''')
-
+        self.slurm_job_id = '51'
+        #return self.slurm_job_id
         queue = "all"
         mem = '200'
         hours = '2'
@@ -136,11 +186,25 @@ $cmd
         export_cmd = full_cmd[0] 
         cmd = full_cmd[1]
         sbatch = sbatch.substitute(dict(export_cmd=export_cmd, cmd=cmd, queue=queue, mem=mem, hours=hours, user=user))
-        #serialsbatch+='cd %s' % "notebooks"
         print('Submitting *****{\n%s\n}*****' % sbatch)
         popen = subprocess.Popen('sbatch', shell = True, stdin = subprocess.PIPE, stdout = subprocess.PIPE)
-        out = popen.communicate(sbatch.encode())[0].strip() #e.g. something like "Submitted batch job 209"
-        return out
+        output = popen.communicate(sbatch.encode())[0].strip() #e.g. something like "Submitted batch job 209"
+        output = output.decode() # convert bytes object to string
+        self.log.debug("Stdout of trying to call sbatch: %s" % output)
+        self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
+
+        job_state = self.check_slurm_job_state()
+        while True:
+            self.log.info("job_state is %s" % job_state)
+            if 'RUNNING' in job_state:
+                break
+            elif 'PENDING' in job_state:
+                job_state = self.check_slurm_job_state()
+                time.sleep(1)
+            else:
+                self.log.info("Job %s failed to start!" % self.slurm_job_id)
+                return 1 # is this right? Or should I not return, or return a different thing?
+        return self.slurm_job_id
 
     def get_slurm_job_info(self, jobid):
         """returns ip address of node that is running the job"""
@@ -154,7 +218,6 @@ $cmd
         popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         out = popen.communicate()[0].strip().decode()
         node_ip = out.split(' ')[-1] # the last portion of the output should be the ip address
-
         return (node_ip, node_name)
 
     @gen.coroutine
@@ -172,34 +235,35 @@ $cmd
         for k in ["JPY_API_TOKEN"]:
             cmd.insert(0, 'export %s="%s";' % (k, env[k]))
         #self.pid, stdin, stdout, stderr = execute(self.channel, ' '.join(cmd))
-        
         output = yield self.run_jupyterhub_singleuser(' '.join(cmd), self.user.name)
-        output = output.decode() # convert bytes object to string
-        self.log.debug("Stdout of trying to call run_jupyterhub_singleuser(): %s" % output)
-        self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
+        if output == 1:
+            self.log.error("Slurm job never started, exited with error 1")
+            return
+        #output = output.decode() # convert bytes object to string
+        #self.log.debug("Stdout of trying to call run_jupyterhub_singleuser(): %s" % output)
+        #self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
 
         # make sure jobid is really a number
         try:
             int(self.slurm_job_id)
         except ValueError:
-            self.log.info("sbatch returned this at the end of their string: %s" % self.slurm_job_id)
-
-        #time.sleep(2)
-        job_state = self._check_slurm_job_state()
-        for i in range(5):
-            self.log.info("job_state is %s" % job_state)
-            if 'RUNNING' in job_state:
-                break
-            elif 'PENDING' in job_state:
-                job_state = self._check_slurm_job_state()
-                time.sleep(1)
-            else:
-                self.log.info("Job %s failed to start!" % self.slurm_job_id)
-                return 1 # is this right? Or should I not return, or return a different thing?
-        
+            self.log.error("sbatch returned this at the end of their string: %s" % self.slurm_job_id)
+            return 1
+        #job_state = yield self.check_slurm_job_state()
+       # for i in range(5):
+       #     self.log.info("job_state is %s" % job_state)
+       #     if 'RUNNING' in job_state:
+       #         break
+       #     elif 'PENDING' in job_state:
+       #         job_state = yield self.check_slurm_job_state()
+       #         time.sleep(1)
+       #     else:
+       #         self.log.info("Job %s failed to start!" % self.slurm_job_id)
+       #         return 1 # is this right? Or should I not return, or return a different thing?
+         
         node_ip, node_name  = self.get_slurm_job_info(self.slurm_job_id)
-        if node_ip is None or node_name is None:
-            return 1 # slurm job didn't submit
+        #if node_ip is None or node_name is None:
+        #    return 1 # slurm job didn't submit
         self.user.server.ip = node_ip 
         self.log.info("Notebook server running on %s (%s)" % (node_name, node_ip))
 
@@ -207,7 +271,7 @@ $cmd
     def poll(self):
         """Poll the process"""
         if self.slurm_job_id is not None:
-            state = self._check_slurm_job_state()
+            state = self.check_slurm_job_state()
             if "RUNNING" in state or "PENDING" in state:
                 return None
             else:
@@ -226,29 +290,35 @@ $cmd
         we can use it when we are using setuid (we are root)"""
         return True
 
+    #@gen.coroutine
+    #def stop(self, now=False):
+    #    """stop the subprocess
+
+    #    if `now`, skip waiting for clean shutdown
+    #    """
+    #    #status = yield self.poll()
+    #    if status is not None:
+    #        # job is not running
+    #        return
+
+    #    cmd = 'scancel ' + self.slurm_job_id
+    #    self.log.info("Cancelling slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
+
+    #    job_state = run_command(cmd)
+    #    
+    #    if job_state in ("CANCELLED", "COMPLETED", "FAILED", "COMPLETING"):
+    #        return
+    #    else:
+    #        status = yield self.poll()
+    #        if status is None:
+    #            self.log.warn("Job %s never cancelled" % self.slurm_job_id)
+
     @gen.coroutine
     def stop(self, now=False):
-        """stop the subprocess
-
-        if `now`, skip waiting for clean shutdown
-        """
-        status = yield self.poll()
-        if status is not None:
-            # job is not running
-            return
-
-        cmd = 'scancel ' + self.slurm_job_id
-        self.log.info("Cancelling slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
-
-        job_state = run_command(cmd)
+        self.log.info("Stopping slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
+        is_stopped = yield self.stop_slurm_job()
+        if not is_stopped:
+            self.log.warn("Job %s didn't stop. Trying again..." % self.slurm_job_id)
+            yield self.stop_slurm_job()
         
-        if job_state in ("CANCELLED", "COMPLETED", "FAILED", "COMPLETING"):
-            return
-        else:
-            status = yield self.poll()
-            if status is None:
-                self.log.warn("Job %s never cancelled" % self.slurm_job_id)
-
-
-if __name__ == "__main__":
-    pass
+        self.clear_state()
