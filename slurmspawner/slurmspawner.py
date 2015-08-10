@@ -238,6 +238,13 @@ $cmd
             else:
                 self.log.info("Job %s failed to start!" % self.slurm_job_id)
                 return 1 # is this right? Or should I not return, or return a different thing?
+
+        node_ip, node_name  = self.get_slurm_job_info(self.slurm_job_id)
+        #if node_ip is None or node_name is None:
+        #    return 1 # slurm job didn't submit
+        self.user.server.ip = node_ip 
+        self.user.server.port = port
+        self.log.info("Notebook server running on %s:%s (%s)" % (node_ip, port, node_name))
         return self.slurm_job_id
 
     def get_slurm_job_info(self, jobid):
@@ -262,9 +269,9 @@ $cmd
         self.slurm_job_id = jobid
         self.user.server.port = port
         if jobid != "" and port != "":
-            self.log.debug("Server was found running with slurm jobid '%s' \
+            self.log.debug("*** STARTED SERVER *** Server was found running with slurm jobid '%s' \
                             for user '%s' on port %s" % (jobid, self.user.name, port)) 
-            node_ip, node_name = self.get_slurm_job_info(jobid)
+            node_ip, node_name  = self.get_slurm_job_info(jobid)
             self.user.server.ip = node_ip
             return
 
@@ -294,11 +301,11 @@ $cmd
         #self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
 
         # make sure jobid is really a number
-        try:
-            int(self.slurm_job_id)
-        except ValueError:
-            self.log.error("sbatch returned this at the end of their string: %s" % self.slurm_job_id)
-            return 1
+        #try:
+        #    int(self.slurm_job_id)
+        #except ValueError:
+        #    self.log.error("sbatch returned this at the end of their string: %s" % self.slurm_job_id)
+        #    return 1
         #job_state = yield self.check_slurm_job_state()
        # for i in range(5):
        #     self.log.info("job_state is %s" % job_state)
@@ -311,11 +318,11 @@ $cmd
        #         self.log.info("Job %s failed to start!" % self.slurm_job_id)
        #         return 1 # is this right? Or should I not return, or return a different thing?
          
-        node_ip, node_name  = self.get_slurm_job_info(self.slurm_job_id)
+        #node_ip, node_name  = yield gen.Task(self.get_slurm_job_info, self.slurm_job_id)
         #if node_ip is None or node_name is None:
         #    return 1 # slurm job didn't submit
-        self.user.server.ip = node_ip 
-        self.log.info("Notebook server running on %s (%s)" % (node_name, node_ip))
+        #self.user.server.ip = node_ip 
+        #self.log.info("Notebook server running on %s (%s)" % (node_name, node_ip))
 
     @gen.coroutine
     def poll(self):
@@ -323,8 +330,10 @@ $cmd
         if self.slurm_job_id is not None:
             state = self.check_slurm_job_state()
             if "RUNNING" in state or "PENDING" in state:
+                self.log.debug("Job found to be running/pending for %s on %s:%s" % (self.user.name, self.user.server.ip, self.user.server.port))
                 return None
             else:
+                self.log.debug("Clearing state for %s" % self.user.name)
                 self.clear_state()
                 return 1
 
@@ -365,7 +374,7 @@ $cmd
 
     @gen.coroutine
     def stop(self, now=False):
-        if now:
+        if not now:
             self.log.info("Stopping slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
             is_stopped = yield self.stop_slurm_job()
             if not is_stopped:
