@@ -69,18 +69,22 @@ class SlurmSpawner(Spawner):
         """load slurm_job_id from state"""
         super(SlurmSpawner, self).load_state(state)
         self.slurm_job_id = state.get('slurm_job_id', '')
+        self.slurm_port = state.get('slurm_port', '')
 
     def get_state(self):
         """add slurm_job_id to state"""
         state = super(SlurmSpawner, self).get_state()
         if self.slurm_job_id:
             state['slurm_job_id'] = self.slurm_job_id
+        if self.slurm_port:
+            state['slurm_port'] = self.slurm_port
         return state
 
     def clear_state(self):
         """clear slurm_job_id state"""
         super(SlurmSpawner, self).clear_state()
         self.slurm_job_id = ""
+        self.slurm_port = ""
 
     def user_env(self, env):
         """get user environment"""
@@ -136,29 +140,49 @@ class SlurmSpawner(Spawner):
         self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
         return out
         
-    def _check_slurm_job_state(self):
-        if self.slurm_job_id in (None, ""):
-            # job has been cancelled or failed, so don't even try the squeue command. This is because
-            # squeue will return RUNNING if you submit something like `squeue -h -j -o %T` and there's
-            # at least 1 job running
-            return ""
-        # check sacct to see if the job is still running
-        cmd = 'squeue -h -j ' + self.slurm_job_id + ' -o %T'
-        out = run_command(cmd)
-        self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
-        return out
+    #def _check_slurm_job_state(self):
+    #    if self.slurm_job_id in (None, ""):
+    #        # job has been cancelled or failed, so don't even try the squeue command. This is because
+    #        # squeue will return RUNNING if you submit something like `squeue -h -j -o %T` and there's
+    #        # at least 1 job running
+    #        return ""
+    #    # check sacct to see if the job is still running
+    #    cmd = 'squeue -h -j ' + self.slurm_job_id + ' -o %T'
+    #    out = run_command(cmd)
+    #    self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
+    #    return out
+
+    def query_slurm_by_jobname(self, user, jobname):
+        """
+        uses slurm's squeue to see if there is currently a job called <jobname> running.
+        If so, it returns the jobid
+        """ 
+        cmd = 'squeue -h -u %s --name=%s -O jobid,comment' % (user, jobname)
+        self.log.debug("running command '%s'" % cmd)
+        output = run_command(cmd).strip()
+        output_list = output.split()
+        self.log.debug("output list: %s" % output_list)
+        if len(output_list) > 0:
+            jobid = output_list[0]
+            port = output_list[1]
+        else:
+            return ("", "")
+        self.log.debug("Queried slurm for user=%s jobname=%s and found jobid '%s'" % (user, 
+                                                                                      jobname, 
+                                                                                      jobid))
+        return (jobid, port)
 
     @gen.coroutine
-    def run_jupyterhub_singleuser(self, cmd, user):
+    def run_jupyterhub_singleuser(self, cmd, port, user):
         """ 
         Wrapper for calling run_jupyterhub_singleuser to be passed to ThreadPoolExecutor..
         """
-        args = [cmd, user]
+        args = [cmd, port, user]
         self.log.debug("Now we're in the run_jupyterhub_singleuser method...")
         server = yield self.executor.submit(self._run_jupyterhub_singleuser, *args)
         return server
 
-    def _run_jupyterhub_singleuser(self, cmd, user):
+    def _run_jupyterhub_singleuser(self, cmd, port, user):
         """
         Submits a slurm sbatch script to start jupyterhub-singleuser
         """
@@ -167,7 +191,8 @@ class SlurmSpawner(Spawner):
 #SBATCH --partition=$queue
 #SBATCH --time=$hours:00:00
 #SBATCH -o /home/$user/jupyterhub_slurmspawner_%j.log
-#SBATCH --job-name=spawner-jupyterhub
+#SBATCH --job-name=spawner-jupyterhub-singleuser
+#SBATCH --comment=$port
 #SBATCH --workdir=/home/$user
 #SBATCH --mem=$mem
 #SBATCH --uid=$user
@@ -185,9 +210,18 @@ $cmd
         full_cmd = cmd.split(';')
         export_cmd = full_cmd[0] 
         cmd = full_cmd[1]
-        sbatch = sbatch.substitute(dict(export_cmd=export_cmd, cmd=cmd, queue=queue, mem=mem, hours=hours, user=user))
+        sbatch = sbatch.substitute(dict(export_cmd=export_cmd, 
+                                        cmd=cmd, 
+                                        port=port,
+                                        queue=queue, 
+                                        mem=mem, 
+                                        hours=hours, 
+                                        user=user))
+
         print('Submitting *****{\n%s\n}*****' % sbatch)
-        popen = subprocess.Popen('sbatch', shell = True, stdin = subprocess.PIPE, stdout = subprocess.PIPE)
+        popen = subprocess.Popen('sbatch', 
+                                 shell = True, stdin = subprocess.PIPE, 
+                                 stdout = subprocess.PIPE)
         output = popen.communicate(sbatch.encode())[0].strip() #e.g. something like "Submitted batch job 209"
         output = output.decode() # convert bytes object to string
         self.log.debug("Stdout of trying to call sbatch: %s" % output)
@@ -223,7 +257,20 @@ $cmd
     @gen.coroutine
     def start(self):
         """Start the process"""
+        # first check if the user has a spawner running somewhere on the server
+        jobid, port = self.query_slurm_by_jobname(self.user.name, 'spawner-jupyterhub-singleuser')
+        self.slurm_job_id = jobid
+        self.user.server.port = port
+        if jobid != "" and port != "":
+            self.log.debug("Server was found running with slurm jobid '%s' \
+                            for user '%s' on port %s" % (jobid, self.user.name, port)) 
+            node_ip, node_name = self.get_slurm_job_info(jobid)
+            self.user.server.ip = node_ip
+            return
+
+        # if the above wasn't true, then it didn't find a state for the user
         self.user.server.port = random_port()
+
         cmd = []
         env = self.env.copy()
 
@@ -234,8 +281,11 @@ $cmd
         self.log.info("Spawning %s", ' '.join(cmd))
         for k in ["JPY_API_TOKEN"]:
             cmd.insert(0, 'export %s="%s";' % (k, env[k]))
-        #self.pid, stdin, stdout, stderr = execute(self.channel, ' '.join(cmd))
-        output = yield self.run_jupyterhub_singleuser(' '.join(cmd), self.user.name)
+
+        output = yield self.run_jupyterhub_singleuser(' '.join(cmd),
+                                                      self.user.server.port,
+                                                      self.user.name)
+        
         if output == 1:
             self.log.error("Slurm job never started, exited with error 1")
             return
@@ -315,10 +365,11 @@ $cmd
 
     @gen.coroutine
     def stop(self, now=False):
-        self.log.info("Stopping slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
-        is_stopped = yield self.stop_slurm_job()
-        if not is_stopped:
-            self.log.warn("Job %s didn't stop. Trying again..." % self.slurm_job_id)
-            yield self.stop_slurm_job()
+        if now:
+            self.log.info("Stopping slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
+            is_stopped = yield self.stop_slurm_job()
+            if not is_stopped:
+                self.log.warn("Job %s didn't stop. Trying again..." % self.slurm_job_id)
+                yield self.stop_slurm_job()
         
         self.clear_state()
