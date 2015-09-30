@@ -178,7 +178,19 @@ class SlurmSpawner(Spawner):
         Wrapper for calling run_jupyterhub_singleuser to be passed to ThreadPoolExecutor..
         """
         args = [cmd, port, user]
-        self.log.debug("Now we're in the run_jupyterhub_singleuser method...")
+	# check to make sure the .ipython directory exists for the user before trying to
+        # start the server
+        dir = "/home/%s/.ipython" % user
+        if not os.path.exists(dir):
+            self.log.debug("%s didn't have .ipython dir. Creating %s" % (user, dir))
+            os.mkdir(dir)
+            # get uid and gid of user...there is a function in Spawner that does something with this, but
+            # it creates local variables, so I have to duplicate those calls here
+            uid = pwd.getpwnam(user).pw_uid
+            gid = pwd.getpwnam(user).pw_gid
+            # set permissions on folder so it belongs to user, not root
+            os.chown(dir, uid, gid)
+
         server = yield self.executor.submit(self._run_jupyterhub_singleuser, *args)
         return server
 
@@ -188,9 +200,10 @@ class SlurmSpawner(Spawner):
         """
         self.log.debug("Now we're in the jupyterhub_singleuser method...")
         sbatch = Template('''#!/bin/bash
+
 #SBATCH --partition=$queue
 #SBATCH --time=$hours:00:00
-#SBATCH -o /home/$user/jupyterhub_slurmspawner_%j.log
+#SBATCH -o /home/$user/.ipython/jupyterhub_slurmspawner.log
 #SBATCH --job-name=spawner-jupyterhub-singleuser
 #SBATCH --comment=$port
 #SBATCH --workdir=/home/$user
@@ -198,6 +211,16 @@ class SlurmSpawner(Spawner):
 #SBATCH --uid=$user
 #SBATCH --get-user-env=L
 
+DIR=/home/$user/.ipython/profile_slurm
+echo $$DIR
+# copy the slurm profile from /etc/ipython to user's directory.
+# this is so the ipcluster will run correctly using their user 
+if ! [ -d "$$DIR" ]; then
+    cp -r /etc/ipython/profile_slurm /home/$user/.ipython/
+fi
+
+export PYTHONPATH=/etc/ipython # need this for ipcluster to work
+export PYTHONPATH=$$DIR
 which jupyterhub-singleuser
 $export_cmd
 $cmd
@@ -218,7 +241,7 @@ $cmd
                                         hours=hours, 
                                         user=user))
 
-        print('Submitting *****{\n%s\n}*****' % sbatch)
+        self.log.debug('Submitting *****{\n%s\n}*****' % sbatch)
         popen = subprocess.Popen('sbatch', 
                                  shell = True, stdin = subprocess.PIPE, 
                                  stdout = subprocess.PIPE)
