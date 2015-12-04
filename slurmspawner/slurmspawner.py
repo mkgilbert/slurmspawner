@@ -206,7 +206,8 @@ class SlurmSpawner(Spawner):
             f = open('/etc/jupyterhub/template.slurm')
             sbatch = f.read()
         else:
-            sbatch = '''#SBATCH --partition=all
+            sbatch = '''# user template not found. Using defaults:
+#SBATCH --partition=all
 #SBATCH --mem=200
 #SBATCH --time=2:00:00
 #SBATCH --job-name=spawner-jupyterhub-singleuser'''
@@ -219,12 +220,15 @@ class SlurmSpawner(Spawner):
         cmd = full_cmd[1]
         
         slurm_script = Template('''#!/bin/bash
-$sbatch
 #SBATCH --comment=$port
 #SBATCH -o /home/$user/.ipython/jupyterhub_slurmspawner.log
 #SBATCH --workdir=/home/$user
 #SBATCH --uid=$user
 #SBATCH --get-user-env=L
+
+##### USER-DEFINED TEMPLATE LOADED HERE #####
+$sbatch
+##### END USER-DEFINED TEMPLATE #############
 
 DIR=/home/$user/.ipython/profile_slurm
 echo $$DIR
