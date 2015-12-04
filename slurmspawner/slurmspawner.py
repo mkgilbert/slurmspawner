@@ -33,7 +33,8 @@ def run_command(cmd):
 
 class SlurmSpawner(Spawner):
     """A Spawner that just uses Popen to start local processes."""
-
+    #### These lines are designed to be overridden by the admin in jupyterhub_config.py ###
+     
     _executor = None
     @property
     def executor(self):
@@ -199,15 +200,29 @@ class SlurmSpawner(Spawner):
         Submits a slurm sbatch script to start jupyterhub-singleuser
         """
         self.log.debug("Now we're in the jupyterhub_singleuser method...")
-        sbatch = Template('''#!/bin/bash
+        
+        # need to check if admin has supplied a Slurm template in /etc/jupyterhub
+        if os.path.exists('/etc/jupyterhub/template.slurm'):
+            f = open('/etc/jupyterhub/template.slurm')
+            sbatch = f.read()
+        else:
+            sbatch = '''#SBATCH --partition=all
+#SBATCH --mem=200
+#SBATCH --time=2:00:00
+#SBATCH --job-name=spawner-jupyterhub-singleuser'''
+        self.slurm_job_id = '51'
+        #return self.slurm_job_id
+        # check if admin has set these values in jupyterhub_config.py
 
-#SBATCH --partition=$queue
-#SBATCH --time=$hours:00:00
-#SBATCH -o /home/$user/.ipython/jupyterhub_slurmspawner.log
-#SBATCH --job-name=spawner-jupyterhub-singleuser
+        full_cmd = cmd.split(';')
+        export_cmd = full_cmd[0] 
+        cmd = full_cmd[1]
+        
+        slurm_script = Template('''#!/bin/bash
+$sbatch
 #SBATCH --comment=$port
+#SBATCH -o /home/$user/.ipython/jupyterhub_slurmspawner.log
 #SBATCH --workdir=/home/$user
-#SBATCH --mem=$mem
 #SBATCH --uid=$user
 #SBATCH --get-user-env=L
 
@@ -224,28 +239,29 @@ export PYTHONPATH=$$DIR
 which jupyterhub-singleuser
 $export_cmd
 $cmd
-        ''')
-        self.slurm_job_id = '51'
-        #return self.slurm_job_id
-        queue = "all"
-        mem = '200'
-        hours = '2'
-        full_cmd = cmd.split(';')
-        export_cmd = full_cmd[0] 
-        cmd = full_cmd[1]
-        sbatch = sbatch.substitute(dict(export_cmd=export_cmd, 
-                                        cmd=cmd, 
-                                        port=port,
-                                        queue=queue, 
-                                        mem=mem, 
-                                        hours=hours, 
-                                        user=user))
 
-        self.log.debug('Submitting *****{\n%s\n}*****' % sbatch)
+        ''')
+        ##### my original version ############################################
+        #sbatch = sbatch.substitute(dict(export_cmd=export_cmd, 
+        #                                cmd=cmd, 
+        #                                port=port,
+        #                                queue=str(SlurmSpawner.partition.default_value), 
+        #                                mem=str(SlurmSpawner.mem_in_mb.default_value), 
+        #                                hours=str(SlurmSpawner.time_in_hrs.default_value), 
+        #                                user=user))
+        #### end original version ############################################
+        # load the sbatch portion into the slurm script
+        slurm_script = slurm_script.substitute(dict(sbatch=sbatch,
+                                                    export_cmd=export_cmd,
+                                                    cmd=cmd,
+                                                    port=port,
+                                                    user=user))
+         
+        self.log.debug('Submitting *****{\n%s\n}*****' % slurm_script)
         popen = subprocess.Popen('sbatch', 
                                  shell = True, stdin = subprocess.PIPE, 
                                  stdout = subprocess.PIPE)
-        output = popen.communicate(sbatch.encode())[0].strip() #e.g. something like "Submitted batch job 209"
+        output = popen.communicate(slurm_script.encode())[0].strip() #e.g. something like "Submitted batch job 209"
         output = output.decode() # convert bytes object to string
         self.log.debug("Stdout of trying to call sbatch: %s" % output)
         self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
