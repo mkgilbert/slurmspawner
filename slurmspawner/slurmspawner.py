@@ -199,13 +199,12 @@ class SlurmSpawner(Spawner):
         """
         Submits a slurm sbatch script to start jupyterhub-singleuser
         """
-        self.log.debug("Now we're in the jupyterhub_singleuser method...")
-        
         # need to check if admin has supplied a Slurm template in /etc/jupyterhub
         if os.path.exists('/etc/jupyterhub/template.slurm'):
             f = open('/etc/jupyterhub/template.slurm')
             sbatch = f.read()
         else:
+            self.log.debug("No Slurm template found. Using defaults")
             sbatch = '''# user template not found. Using defaults:
 #SBATCH --partition=all
 #SBATCH --mem=200
