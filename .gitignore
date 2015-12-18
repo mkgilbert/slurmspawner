@@ -2,3 +2,4 @@
 *.log
 *.pyc
 __pycache__/
+*-uninstall/
