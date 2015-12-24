@@ -261,6 +261,24 @@ $cmd
                                                     port=port,
                                                     user=user))
          
+        ########## TESTING ##########
+        # before we submit this job, we need to create a tmp file that will serve as a hash file that
+        # slurm can check. If the hash value is wrong, it will know that this script did not submit the job
+        # and will therefore not change any settings (this is because we are using a job_submit.lua script
+        # to change the priority of the jupyterhub jobs
+        uid = pwd.getpwnam(user).pw_uid # get userid of user
+        if not os.path.exists("/tmp/jupyter"):
+            os.mkdir("/tmp/jupyter")
+        hash_file = open("/tmp/jupyter/" + str(uid), "w")
+        # convert port to hash number (just sum the digits)
+        sum = 0
+        for c in str(port):
+            sum += int(c)
+        hash = str(sum)
+        hash_file.write(hash)
+        hash_file.close()
+        ###### END TESTING ##########
+
         self.log.debug('Submitting *****{\n%s\n}*****' % slurm_script)
         popen = subprocess.Popen('sbatch', 
                                  shell = True, stdin = subprocess.PIPE, 
