@@ -230,7 +230,8 @@ class SlurmSpawner(Spawner):
         
         slurm_script = Template('''#!/bin/bash
 #SBATCH --comment=$port
-#SBATCH -o /home/$user/.ipython/jupyterhub_slurmspawner.log
+#SBATCH --output=/home/$user/.ipython/jupyterhub_slurmspawner.log
+#SBATCH --open-mode=append
 #SBATCH --workdir=/home/$user
 #SBATCH --uid=$user
 #SBATCH --get-user-env=L
