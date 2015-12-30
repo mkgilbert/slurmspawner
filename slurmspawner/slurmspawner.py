@@ -221,14 +221,14 @@ class SlurmSpawner(Spawner):
             sbatch = '''# user template not found. Using defaults:
 #SBATCH --partition=all
 #SBATCH --mem=200
-#SBATCH --time=2:00:00
-#SBATCH --job-name=spawner-jupyterhub-singleuser'''
+#SBATCH --time=2:00:00'''
        
         full_cmd = cmd.split(';')
         export_cmd = full_cmd[0] 
         cmd = full_cmd[1]
         
         slurm_script = Template('''#!/bin/bash
+#SBATCH --job-name=spawner-jupyterhub-singleuser
 #SBATCH --comment=$port
 #SBATCH --output=/home/$user/.ipython/jupyterhub_slurmspawner.log
 #SBATCH --open-mode=append
