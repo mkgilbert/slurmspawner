@@ -393,18 +393,20 @@ $cmd
     @gen.coroutine
     def poll(self):
         """Poll the process"""
+        self.log.debug("Polling job...")
         if self.slurm_job_id is not None:
             state = self.check_slurm_job_state()
             if "RUNNING" in state or "PENDING" in state:
                 self.log.debug("Job found to be running/pending for %s on %s:%s" % (self.user.name, self.user.server.ip, self.user.server.port))
                 return None
             else:
-                self.log.debug("Clearing state for %s" % self.user.name)
+                self.log.debug("Job found to be %s Clearing state for %s" % (state, self.user.name))
                 self.clear_state()
                 return 1
 
         if not self.slurm_job_id:
             # no job id means it's not running
+            self.log.debug("No job info to poll. Clearing state for %s" % self.user.name)
             self.clear_state()
             return 1
 
