@@ -262,6 +262,24 @@ $cmd
                                                     port=port,
                                                     user=user))
          
+        ########## TESTING ##########
+        # before we submit this job, we need to create a tmp file that will serve as a hash file that
+        # slurm can check. If the hash value is wrong, it will know that this script did not submit the job
+        # and will therefore not change any settings (this is because we are using a job_submit.lua script
+        # to change the priority of the jupyterhub jobs
+        uid = pwd.getpwnam(user).pw_uid # get userid of user
+        if not os.path.exists("/tmp/jupyter"):
+            os.mkdir("/tmp/jupyter")
+        hash_file = open("/tmp/jupyter/" + str(uid), "w")
+        # convert port to hash number (just sum the digits)
+        sum = 0
+        for c in str(port):
+            sum += int(c)
+        hash = str(sum)
+        hash_file.write(hash)
+        hash_file.close()
+        ###### END TESTING ##########
+
         self.log.debug('Submitting *****{\n%s\n}*****' % slurm_script)
         popen = subprocess.Popen('sbatch', 
                                  shell = True, stdin = subprocess.PIPE, 
@@ -375,18 +393,20 @@ $cmd
     @gen.coroutine
     def poll(self):
         """Poll the process"""
+        self.log.debug("Polling job...")
         if self.slurm_job_id is not None:
             state = self.check_slurm_job_state()
             if "RUNNING" in state or "PENDING" in state:
                 self.log.debug("Job found to be running/pending for %s on %s:%s" % (self.user.name, self.user.server.ip, self.user.server.port))
                 return None
             else:
-                self.log.debug("Clearing state for %s" % self.user.name)
+                self.log.debug("Job found to be %s Clearing state for %s" % (state, self.user.name))
                 self.clear_state()
                 return 1
 
         if not self.slurm_job_id:
             # no job id means it's not running
+            self.log.debug("No job info to poll. Clearing state for %s" % self.user.name)
             self.clear_state()
             return 1
 
