@@ -62,6 +62,9 @@ class SlurmSpawner(Spawner):
     slurm_job_id = Unicode() # will get populated after spawned
     pid = Integer(0)
     
+    extra_launch_script = Unicode("/etc/jupyterhub/extra_launch_script", config=True, \
+        help="bash script snippet that will be inserted into Slurm job script")
+        
     # user-configurable options that can be changed in jupyterhub_config.py
     partition = Unicode("all", config=True, help="Slurm partition to launch the spawner on")
     memory = Integer(400, config=True, help="Slurm memory allocated for the spawner")
@@ -212,8 +215,9 @@ class SlurmSpawner(Spawner):
         Submits a slurm sbatch script to start jupyterhub-singleuser
         """
         # need to check if admin has supplied a Slurm template in /etc/jupyterhub
-        if os.path.exists('/etc/jupyterhub/template.slurm'):
-            f = open('/etc/jupyterhub/template.slurm')
+        if os.path.exists(str(self.extra_launch_script)):
+            self.log.info("loading extra script snippet found at '%s' into slurm script" % self.extra_launch_script)
+            f = open(str(self.extra_launch_script))
             sbatch = f.read()
         else:
             self.log.debug("No Slurm template found. Using defaults")
