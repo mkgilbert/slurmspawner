@@ -58,23 +58,25 @@ class SlurmSpawner(Spawner):
             cls._executor = ThreadPoolExecutor(1)
         return cls._executor
 
-    INTERRUPT_TIMEOUT = Integer(1200, config=True, \
-        help="Seconds to wait for process to halt after SIGINT before proceeding to SIGTERM"
-                               )
-    TERM_TIMEOUT = Integer(1200, config=True, \
-        help="Seconds to wait for process to halt after SIGTERM before proceeding to SIGKILL"
-                          )
-    KILL_TIMEOUT = Integer(1200, config=True, \
-        help="Seconds to wait for process to halt after SIGKILL before giving up"
-                          )
-
-    ip = Unicode("0.0.0.0", config=True, \
-        help="url of the server")
-
+    ip = Unicode("0.0.0.0", config=True, help="url of the server")
     slurm_job_id = Unicode() # will get populated after spawned
-
     pid = Integer(0)
-
+    
+    extra_launch_script = Unicode("/etc/jupyterhub/extra_launch_script", config=True, \
+        help="bash script snippet that will be inserted into Slurm job script")
+        
+    # user-configurable options that can be changed in jupyterhub_config.py
+    partition = Unicode("all", config=True, help="Slurm partition to launch the spawner on")
+    memory = Integer(400, config=True, help="Slurm memory allocated for the spawner")
+    time = Unicode("1-00:00:00", config=True, \
+        help="Slurm max time to allow spawner to run (uses Slurm time format of dd-hhh:mm:ss)")
+    ntasks = Integer(1, config=True, help="Slurm ntasks for spawner")
+    cpus_per_task = Integer(1, config=True, help="Slurm cpus-per-task for spawner")
+    qos = Unicode("normal", config=True, help="Slurm QOS to run spawner under")
+    job_name = Unicode("spawner-jupyterhub-singleuser", config=True, help="Slurm job name for spawner")
+    output = Unicode("/.ipython/jupyterhub-slurmspawner.log", config=True, \
+        help="Slurm output file location -- this dir is appended to /home/$USER")
+    
     def make_preexec_fn(self, name):
         """make preexec fn"""
         return set_user_setuid(name)
@@ -213,26 +215,30 @@ class SlurmSpawner(Spawner):
         Submits a slurm sbatch script to start jupyterhub-singleuser
         """
         # need to check if admin has supplied a Slurm template in /etc/jupyterhub
-        if os.path.exists('/etc/jupyterhub/template.slurm'):
-            f = open('/etc/jupyterhub/template.slurm')
+        if os.path.exists(str(self.extra_launch_script)):
+            self.log.info("loading extra script snippet found at '%s' into slurm script" % self.extra_launch_script)
+            f = open(str(self.extra_launch_script))
             sbatch = f.read()
         else:
             self.log.debug("No Slurm template found. Using defaults")
-            sbatch = '''# user template not found. Using defaults:
-#SBATCH --partition=all
-#SBATCH --mem=200
-#SBATCH --time=2:00:00'''
+            sbatch = "# *** No user template found ***"
        
         full_cmd = cmd.split(';')
         export_cmd = full_cmd[0] 
         cmd = full_cmd[1]
         
         slurm_script = Template('''#!/bin/bash
-#SBATCH --job-name=spawner-jupyterhub-singleuser
-#SBATCH --comment=$port
-#SBATCH --output=/home/$user/.ipython/jupyterhub_slurmspawner.log
-#SBATCH --open-mode=append
+#SBATCH --cpus-per-task=$cpus
+#SBATCH --job-name=$job_name
+#SBATCH --memory=$mem
+#SBATCH --ntasks=$ntasks
+#SBATCH --output=/home/$user/$output
+#SBATCH --partition=$part
+#SBATCH --qos=$qos
+#SBATCH --time=$time
 #SBATCH --workdir=/home/$user
+#SBATCH --comment=$port
+#SBATCH --open-mode=append
 #SBATCH --uid=$user
 #SBATCH --get-user-env=L
 
@@ -240,13 +246,13 @@ class SlurmSpawner(Spawner):
 $sbatch
 ##### END USER-DEFINED TEMPLATE #############
 
-DIR=/home/$user/.ipython/profile_slurm
-echo $$DIR
+#DIR=/home/$user/.ipython/profile_slurm
+#echo $$DIR
 # copy the slurm profile from /etc/ipython to user's directory.
 # this is so the ipcluster will run correctly using their user 
-if ! [ -d "$$DIR" ]; then
-    cp -r /etc/ipython/profile_slurm /home/$user/.ipython/
-fi
+#if ! [ -d "$$DIR" ]; then
+#    cp -r /etc/ipython/profile_slurm /home/$user/.ipython/
+#fi
 
 export PYTHONPATH=/etc/ipython # need this for ipcluster to work
 export PYTHONPATH=$$DIR
@@ -256,12 +262,19 @@ $cmd
 
         ''')
         # load the sbatch portion into the slurm script
-        slurm_script = slurm_script.substitute(dict(sbatch=sbatch,
+        slurm_script = slurm_script.substitute(dict(cpus=self.cpus_per_task,
+                                                    job_name=self.job_name,
+                                                    mem=self.memory,
+                                                    ntasks=self.ntasks,
+                                                    output=self.output,
+                                                    part=self.partition,
+                                                    qos=self.qos,
+                                                    time=self.time,
+                                                    sbatch=sbatch,
                                                     export_cmd=export_cmd,
                                                     cmd=cmd,
                                                     port=port,
                                                     user=user))
-         
         ########## TESTING ##########
         # before we submit this job, we need to create a tmp file that will serve as a hash file that
         # slurm can check. If the hash value is wrong, it will know that this script did not submit the job
