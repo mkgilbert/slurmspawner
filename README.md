@@ -28,7 +28,8 @@ Some of the other SBATCH options are not included because they would interfere w
 
 You can add more functionality to the basic job script by specifying a bash script snippet. This is done with the `extra_launch_script` variable. For example, if you would like to make sure the user has a certain binary added to their path when they log in and also make soft links to an nfs "scratch" directory, your "snippet" would look like:
 
-```export PATH=/path/to/binary:${PATH}
+```bash
+   export PATH=/path/to/binary:${PATH}
    ln -s /scratch/${USER} ${HOME}
 ```
 Now just add `c.SlurmSpawner.extra_launch_script = /path/to/snippet` to your jupyterhub_config.py file and you're done!
