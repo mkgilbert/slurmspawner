@@ -24,7 +24,9 @@ There are several values you can set in jupyterhub_config.py that override the d
 - output (String output file. Note that this will be appended to /home/$USER, so any subdirectories must already exist in the user's home directory.)
 - cpus_per_task (Integer)
 - ntasks (Integer)
+
 Some of the other SBATCH options are not included because they would interfere with how SlurmSpawner works. For example, `workdir` needs to be /home/$USER because this is where jupyterhub will land you when you log in. If the submitting user isn't the owner of `workdir` the job will fail silently. If you would like access to other directories, it may be easiest to use the `extra_launch_script` variable described below to create soft links for the user on submission of the SlurmSpawner job.
+
 
 You can add more functionality to the basic job script by specifying a bash script snippet. This is done with the `extra_launch_script` variable. For example, if you would like to make sure the user has a certain binary added to their path when they log in and also make soft links to an nfs "scratch" directory, your "snippet" would look like:
 
