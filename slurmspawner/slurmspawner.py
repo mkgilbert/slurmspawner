@@ -68,7 +68,7 @@ class SlurmSpawner(Spawner):
         
     # user-configurable options that can be changed in jupyterhub_config.py
     partition = Unicode("all", config=True, help="Slurm partition to launch the spawner on")
-    memory = Integer(400, config=True, help="Slurm memory allocated for the spawner")
+    mem = Integer(400, config=True, help="Slurm memory allocated for the spawner")
     time = Unicode("1-00:00:00", config=True, \
         help="Slurm max time to allow spawner to run (uses Slurm time format of dd-hhh:mm:ss)")
     ntasks = Integer(1, config=True, help="Slurm ntasks for spawner")
@@ -209,7 +209,7 @@ class SlurmSpawner(Spawner):
         slurm_script = Template('''#!/bin/bash
 #SBATCH --cpus-per-task=$cpus
 #SBATCH --job-name=$job_name
-#SBATCH --memory=$mem
+#SBATCH --mem=$mem
 #SBATCH --ntasks=$ntasks
 #SBATCH --output=/home/$user/$output
 #SBATCH --partition=$part
@@ -243,7 +243,7 @@ $cmd
         # load the sbatch portion into the slurm script
         slurm_script = slurm_script.substitute(dict(cpus=self.cpus_per_task,
                                                     job_name=self.job_name,
-                                                    mem=self.memory,
+                                                    mem=self.mem,
                                                     ntasks=self.ntasks,
                                                     output=self.output,
                                                     part=self.partition,
