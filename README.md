@@ -24,7 +24,7 @@ There are several values you can set in jupyterhub_config.py that override the d
 - output (String output file. Note that this will be appended to /home/$USER, so any subdirectories must already exist in the user's home directory.)
 - cpus_per_task (Integer)
 - ntasks (Integer)
-Some of the other SBATCH options are not included because they would interfere with how SlurmSpawner works. For example, `workdir` needs to be /home/$USER because this is where jupyterhub will land you when you log in. If you aren't the submitting user isn't the owner of `workdir` the job would fail to launch silently. If you would like access to other directories, it may be easiest to use the `extra_launch_script` variable described below to create soft links for the user on submission of the SlurmSpawner job.
+Some of the other SBATCH options are not included because they would interfere with how SlurmSpawner works. For example, `workdir` needs to be /home/$USER because this is where jupyterhub will land you when you log in. If the submitting user isn't the owner of `workdir` the job will fail silently. If you would like access to other directories, it may be easiest to use the `extra_launch_script` variable described below to create soft links for the user on submission of the SlurmSpawner job.
 
 You can add more functionality to the basic job script by specifying a bash script snippet. This is done with the `extra_launch_script` variable. For example, if you would like to make sure the user has a certain binary added to their path when they log in and also make soft links to an nfs "scratch" directory, your "snippet" would look like:
 
@@ -32,7 +32,13 @@ You can add more functionality to the basic job script by specifying a bash scri
    export PATH=/path/to/binary:${PATH}
    ln -s /scratch/${USER} ${HOME}
 ```
-Now just add `c.SlurmSpawner.extra_launch_script = /path/to/snippet` to your jupyterhub_config.py file and you're done!
+Now just add 
+```python
+   c.SlurmSpawner.extra_launch_script = /path/to/snippet
+```
+to your jupyterhub_config.py file and that's it! When you run jupyterhub and a user logs in, it will set the path and soft links every time.
 
 ##Logging
-There is quite verbose debug logging in SlurmSpawner (probably too verbose), so when testing this out it might help to set `c.Spawner.debug = True` in jupyterhub_config.py. This way you can see exactly what script is being sent to Slurm, and the jobid and status of all running servers.
+There is quite verbose debug logging in SlurmSpawner (probably too verbose), so when testing this out it might help to set `c.Spawner.debug = True` in jupyterhub_config.py. This way you can see exactly what script is being sent to Slurm, and the jobid and status of all running servers each time they are polled.
+
+
