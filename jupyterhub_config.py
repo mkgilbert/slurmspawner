@@ -28,7 +28,7 @@ c.SlurmSpawner.extra_launch_script = pjoin('/etc/jupyterhub/extra_launch_script'
 # Extra functionality for your SlurmSpawner can be added through a script pointed to by c.SlurmSpawner.extra_launch_script
 c.SlurmSpawner.job_name = "jupyterhub-singleuser"
 c.SlurmSpawner.partition = 'all'
-c.SlurmSpawner.memory = 350 # memory in MB
+c.SlurmSpawner.mem = 350 # memory in MB
 c.SlurmSpawner.time = "8:00:00" # Slurm-style time dd-hh:mm:ss
 c.SlurmSpawner.qos = "jupyter"  # this must exist or jupyterhub will fail to start
 c.SlurmSpawner.output = "jhub-spawner.log" # this file/dir is appended to /home/$USER/
