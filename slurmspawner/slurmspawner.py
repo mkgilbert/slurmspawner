@@ -189,7 +189,13 @@ class SlurmSpawner(Spawner):
         else:
             self.log.debug("No Slurm template found. Using defaults")
             sbatch = "# *** No user template found ***"
-       
+
+        ### there is a problem submitting slurm jobs as other users from an elevated account. The issue is the
+        ### environment variables of the submitting user don't get overwritten by the user you're trying to run
+        ### the job as. So $HOME stays as "/root" and $USER stays as "root" if you run the script as root.
+        ### so we need to unset those variables here before submitting the script. This way, Slurm should populate
+        ### them with the appropriate user info
+
         full_cmd = cmd.split(';')
         export_cmd = full_cmd[0] 
         cmd = full_cmd[1]
@@ -207,7 +213,7 @@ class SlurmSpawner(Spawner):
 #SBATCH --comment=$port
 #SBATCH --open-mode=append
 #SBATCH --uid=$user
-#SBATCH --get-user-env=L
+#SBATCH --export=none
 
 ##### USER-DEFINED TEMPLATE LOADED HERE #####
 $sbatch
