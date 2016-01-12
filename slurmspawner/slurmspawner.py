@@ -212,17 +212,7 @@ class SlurmSpawner(Spawner):
 $sbatch
 ##### END USER-DEFINED TEMPLATE #############
 
-#DIR=/home/$user/.ipython/profile_slurm
-#echo $$DIR
-# copy the slurm profile from /etc/ipython to user's directory.
-# this is so the ipcluster will run correctly using their user 
-#if ! [ -d "$$DIR" ]; then
-#    cp -r /etc/ipython/profile_slurm /home/$user/.ipython/
-#fi
-
-export PYTHONPATH=/etc/ipython # need this for ipcluster to work
-export PYTHONPATH=$$DIR
-which jupyterhub-singleuser
+echo "*** Spawning single-user server ***"
 $export_cmd
 $cmd
 
