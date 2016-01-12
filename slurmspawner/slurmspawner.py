@@ -173,19 +173,6 @@ class SlurmSpawner(Spawner):
         Wrapper for calling run_jupyterhub_singleuser to be passed to ThreadPoolExecutor..
         """
         args = [cmd, port, user]
-	# check to make sure the .ipython directory exists for the user before trying to
-        # start the server
-        dir = "/home/%s/.ipython" % user
-        if not os.path.exists(dir):
-            self.log.debug("%s didn't have .ipython dir. Creating %s" % (user, dir))
-            os.mkdir(dir)
-            # get uid and gid of user...there is a function in Spawner that does something with this, but
-            # it creates local variables, so I have to duplicate those calls here
-            uid = pwd.getpwnam(user).pw_uid
-            gid = pwd.getpwnam(user).pw_gid
-            # set permissions on folder so it belongs to user, not root
-            os.chown(dir, uid, gid)
-
         server = yield self.executor.submit(self._run_jupyterhub_singleuser, *args)
         return server
 
