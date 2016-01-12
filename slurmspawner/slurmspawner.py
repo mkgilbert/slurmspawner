@@ -27,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tornado import gen
 
 from traitlets import (
-    Instance, Integer, Unicode
+    Bool, Instance, Integer, Unicode
 )
 
 from jupyterhub.spawner import Spawner
@@ -77,6 +77,7 @@ class SlurmSpawner(Spawner):
     job_name = Unicode("spawner-jupyterhub-singleuser", config=True, help="Slurm job name for spawner")
     output = Unicode("/.ipython/jupyterhub-slurmspawner.log", config=True, \
         help="Slurm output file location -- this dir is appended to /home/$USER")
+    run_with_sudo = Bool(False, config=True, help="run the sbatch command with sudo instead of just 'sbatch'")
     
     def make_preexec_fn(self, name):
         """make preexec fn"""
@@ -255,10 +256,15 @@ $cmd
         hash_file.close()
         ###### END TESTING ##########
 
+        if self.run_with_sudo:
+            self.log.debug("Running sbatch with sudo privileges")
+            cmd = "sudo sbatch"
+        else:
+            cmd = "sbatch"
         self.log.debug('Submitting *****{\n%s\n}*****' % slurm_script)
-        popen = subprocess.Popen('sbatch', 
-                                 shell = True, stdin = subprocess.PIPE, 
-                                 stdout = subprocess.PIPE)
+        popen = subprocess.Popen(cmd,
+                                 shell=True, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE)
         output = popen.communicate(slurm_script.encode())[0].strip() #e.g. something like "Submitted batch job 209"
         output = output.decode() # convert bytes object to string
 
