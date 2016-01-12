@@ -239,7 +239,13 @@ $cmd
         uid = pwd.getpwnam(user).pw_uid # get userid of user
         if not os.path.exists("/tmp/jupyter"):
             os.mkdir("/tmp/jupyter")
-        hash_file = open("/tmp/jupyter/" + str(uid), "w")
+        # check if file already exists
+        try:
+            file_name = "/tmp/jupyter/" + str(uid)
+            hash_file = open(file_name, "w")
+        except IOError:
+            self.log.error("Error opening hash file '%s' for writing" % file_name)
+            return 1
         # convert port to hash number (just sum the digits)
         sum = 0
         for c in str(port):
@@ -255,6 +261,7 @@ $cmd
                                  stdout = subprocess.PIPE)
         output = popen.communicate(slurm_script.encode())[0].strip() #e.g. something like "Submitted batch job 209"
         output = output.decode() # convert bytes object to string
+
         self.log.debug("Stdout of trying to call sbatch: %s" % output)
         self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
 
