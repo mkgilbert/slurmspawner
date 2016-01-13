@@ -215,7 +215,9 @@ class SlurmSpawner(Spawner):
 #SBATCH --comment=$port
 #SBATCH --open-mode=append
 #SBATCH --uid=$user
+#SBATCH --gid=$gid
 #SBATCH --export=none
+#SBATCH --get-user-env=L
 
 ##### USER-DEFINED TEMPLATE LOADED HERE #####
 $sbatch
@@ -226,7 +228,8 @@ $export_cmd
 $cmd
 
         ''')
-        # load the sbatch portion into the slurm script
+
+        gid = pwd.getpwnam(user).pw_gid # get group id of user
         slurm_script = slurm_script.substitute(dict(cpus=self.cpus_per_task,
                                                     job_name=self.job_name,
                                                     mem=self.mem,
@@ -239,7 +242,8 @@ $cmd
                                                     export_cmd=export_cmd,
                                                     cmd=cmd,
                                                     port=port,
-                                                    user=user))
+                                                    user=user,
+                                                    gid=gid))
         ########## TESTING ##########
         # before we submit this job, we need to create a tmp file that will serve as a hash file that
         # slurm can check. If the hash value is wrong, it will know that this script did not submit the job
