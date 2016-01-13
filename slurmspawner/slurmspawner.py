@@ -35,6 +35,14 @@ from jupyterhub.spawner import set_user_setuid
 from jupyterhub.utils import random_port
 
 
+class SlurmException(Exception):
+    pass
+
+
+class SlurmSpawnerException(Exception):
+    pass
+
+
 def run_command(cmd):
     popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     out = popen.communicate()
@@ -245,8 +253,10 @@ $cmd
             file_name = "/tmp/jupyter/" + str(uid)
             hash_file = open(file_name, "w")
         except IOError:
-            self.log.error("Error opening hash file '%s' for writing" % file_name)
-            return 1
+            error = "Error opening hash file '%s' for writing" % file_name
+            self.log.error(error)
+            raise SlurmException(error)
+
         # convert port to hash number (just sum the digits)
         sum = 0
         for c in str(port):
@@ -268,7 +278,13 @@ $cmd
         output = popen.communicate(slurm_script.encode())[0].strip() #e.g. something like "Submitted batch job 209"
         output = output.decode() # convert bytes object to string
 
-        self.log.debug("Stdout of trying to call sbatch: %s" % output)
+        if output == "" or len(output) == 0:
+            error = "Slurm did not attempt to start the job! Check Slurm logs"
+            self.log.error(error)
+            raise SlurmException(error)
+
+
+        self.log.debug("Stdout of trying to launch with sbatch: %s" % output)
         self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
 
         job_state = self.check_slurm_job_state()
@@ -281,26 +297,34 @@ $cmd
                 job_state = self.check_slurm_job_state()
                 time.sleep(1)
             else:
-                self.log.info("Job %s failed to start!" % self.slurm_job_id)
-                return 1 # is this right? Or should I not return, or return a different thing?
+                error = "Job %s failed to start!" % self.slurm_job_id
+                self.log.error(error)
+                raise SlurmException(error)
 
         node_ip, node_name  = self.get_slurm_job_info(self.slurm_job_id)
-        #if node_ip is None or node_name is None:
-        #    return 1 # slurm job didn't submit
+
+        if node_ip is None or node_name is None:
+            error = "There appears to be no node info available for job %s" % self.slurm_job_id
+            self.log.error(error)
+            raise SlurmException(error)
+
         self.user.server.ip = node_ip 
         self.user.server.port = port
         self.log.info("Notebook server running on %s:%s (%s)" % (node_ip, port, node_name))
         return self.slurm_job_id
 
     def get_slurm_job_info(self, jobid):
-        """returns ip address of node that is running the job"""
+        """returns tuple of ip address and name of node that is running the job"""
+        self.log.debug("Getting slurm job info for job %s" % jobid)
         cmd = 'squeue -h -j ' + jobid + ' -o %N'
+        self.log.debug("Running command: '%s'" % cmd)
         popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         node_name = popen.communicate()[0].strip().decode() # convett bytes object to string
         # now get the ip address of the node name
         if node_name in (None, ""):
             return (None, None)
         cmd = 'host %s' % node_name
+        self.log.debug("Running command: '%s'" % cmd)
         popen = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         out = popen.communicate()[0].strip().decode()
         node_ip = out.split(' ')[-1] # the last portion of the output should be the ip address
@@ -334,13 +358,9 @@ $cmd
         for k in ["JPY_API_TOKEN"]:
             cmd.insert(0, 'export %s="%s";' % (k, env[k]))
 
-        output = yield self.run_jupyterhub_singleuser(' '.join(cmd),
+        yield self.run_jupyterhub_singleuser(' '.join(cmd),
                                                       self.user.server.port,
                                                       self.user.name)
-        
-        if output == 1:
-            self.log.error("Slurm job never started, exited with error 1")
-            return
 
     @gen.coroutine
     def poll(self):
