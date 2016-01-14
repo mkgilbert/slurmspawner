@@ -136,8 +136,11 @@ class SlurmSpawner(Spawner):
         cmd = 'scancel ' + self.slurm_job_id
         self.log.info("Cancelling slurm job %s for user %s" % (self.slurm_job_id, self.user.name))
 
-        job_state = run_command(cmd)
-        time.sleep(1)
+        output = run_command(cmd)
+        if output not in (None, ""):  # if job is valid, output of scancel should be nothing
+            raise SlurmException("Failed to cancel job %s: slurm output: %s" % (self.slurm_job_id, output))
+
+        job_state = self.check_slurm_job_state()
         if job_state in ("CANCELLED", "COMPLETED", "FAILED", "COMPLETING"):
             return True
         else:
@@ -275,6 +278,7 @@ $cmd
             cmd = "sudo sbatch"
         else:
             cmd = "sbatch"
+
         self.log.debug('Submitting *****{\n%s\n}*****' % slurm_script)
         popen = subprocess.Popen(cmd,
                                  shell=True, stdin=subprocess.PIPE,
@@ -341,6 +345,7 @@ $cmd
         jobid, port = self.query_slurm_by_jobname(self.user.name, self.job_name)
         self.slurm_job_id = jobid
         self.user.server.port = port
+
         if jobid != "" and port != "":
             self.log.debug("*** STARTED SERVER *** Server was found running with slurm jobid '%s' \
                             for user '%s' on port %s" % (jobid, self.user.name, port)) 
@@ -362,6 +367,8 @@ $cmd
         for k in ["JPY_API_TOKEN"]:
             cmd.insert(0, 'export %s="%s";' % (k, env[k]))
 
+        self.db.commit() # added this to test if there is a change in the way jupyterhub is working
+
         yield self.run_jupyterhub_singleuser(' '.join(cmd),
                                                       self.user.server.port,
                                                       self.user.name)
@@ -378,12 +385,14 @@ $cmd
             else:
                 self.log.debug("Job found to be %s Clearing state for %s" % (state, self.user.name))
                 self.clear_state()
+                self.db.commit()
                 return 1
 
         if not self.slurm_job_id:
             # no job id means it's not running
             self.log.debug("No job info to poll. Clearing state for %s" % self.user.name)
             self.clear_state()
+            self.db.commit()
             return 1
 
     @gen.coroutine
