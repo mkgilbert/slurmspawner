@@ -141,7 +141,8 @@ class SlurmSpawner(Spawner):
             raise SlurmException("Failed to cancel job %s: slurm output: %s" % (self.slurm_job_id, output))
 
         job_state = self.check_slurm_job_state()
-        if job_state in ("CANCELLED", "COMPLETED", "FAILED", "COMPLETING"):
+        self.log.debug("job state is %s" % job_state)
+        if job_state in ("CANCELLED", "COMPLETED", "FAILED", "COMPLETING", ""):
             return True
         else:
             return False
@@ -156,6 +157,15 @@ class SlurmSpawner(Spawner):
         # check sacct to see if the job is still running
         cmd = 'squeue -h -j ' + self.slurm_job_id + ' -o %T'
         out = run_command(cmd)
+        self.log.debug("squeue output: %s" % out)
+        if "PENDING" in out:
+            self.log.debug("job is PENDING. Checking reason...")
+            reason = run_command('squeue -h -j ' + self.slurm_job_id + ' -O reason')
+            # sometimes a job can fail and get requeued, which means it will just sit there and get stuck.
+            # we need to combat that by saying that the job has actually failed, so that it will be killed
+            if "failed" in reason:
+                self.log.debug("'failed' was found in reason for pending. Marking job as FAILED")
+                out = "FAILED"
         self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
         return out
         
@@ -163,8 +173,9 @@ class SlurmSpawner(Spawner):
         """
         uses slurm's squeue to see if there is currently a job called <jobname> running.
         If so, it returns the jobid
-        """ 
-        cmd = 'squeue -h -u %s --name=%s -O jobid,comment' % (user, jobname)
+        """
+        self.log.debug("Querying Slurm for user '%s' with jobname '%s'" % (user, jobname))
+        cmd = 'squeue -h -u %s --name=%s -O jobid,comment,reason' % (user, jobname)
         self.log.debug("running command '%s'" % cmd)
         output = run_command(cmd).strip()
         output_list = output.split()
@@ -172,12 +183,11 @@ class SlurmSpawner(Spawner):
         if len(output_list) > 0:
             jobid = output_list[0]
             port = output_list[1]
+            reason = output_list[2:]
         else:
-            return ("", "")
-        self.log.debug("Queried slurm for user=%s jobname=%s and found jobid '%s'" % (user, 
-                                                                                      jobname, 
-                                                                                      jobid))
-        return (jobid, port)
+            return ("", "", "")
+        self.log.debug("Query found jobid '%s'" % (jobid))
+        return (jobid, port, reason)
 
     @gen.coroutine
     def run_jupyterhub_singleuser(self, cmd, port, user):
@@ -341,8 +351,17 @@ $cmd
     @gen.coroutine
     def start(self):
         """Start the process"""
+        self.log.debug("Running start() method...")
         # first check if the user has a spawner running somewhere on the server
-        jobid, port = self.query_slurm_by_jobname(self.user.name, self.job_name)
+        jobid, port, reason = self.query_slurm_by_jobname(self.user.name, self.job_name)
+
+        if "failed" in reason:  # e.g. "launch failed requeued held" means it'll never start. clear everything
+            self.log.error("'failed' was found in squeue 'reason' output for job %s. Running scancel..." % self.slurm_job_id)
+            self._stop_slurm_job()
+            self.clear_state()
+            #self.db.commit()
+            raise SlurmException("Slurm failed to launch job")
+
         self.slurm_job_id = jobid
         self.user.server.port = port
 
@@ -383,17 +402,20 @@ $cmd
                 self.log.debug("Job found to be running/pending for %s on %s:%s" % (self.user.name, self.user.server.ip, self.user.server.port))
                 return None
             else:
-                self.log.debug("Job found to be %s Clearing state for %s" % (state, self.user.name))
+                if state == "":
+                    self.log.debug("No job state found. Clearing state for %s", self.user.name)
+                else:
+                    self.log.debug("Job found to be %s. Clearing state for %s" % (state, self.user.name))
+                    self._stop_slurm_job()
+
                 self.clear_state()
-                self.db.commit()
-                return 1
+                return 127
 
         if not self.slurm_job_id:
             # no job id means it's not running
             self.log.debug("No job info to poll. Clearing state for %s" % self.user.name)
             self.clear_state()
-            self.db.commit()
-            return 1
+            return 127
 
     @gen.coroutine
     def _signal(self, sig):
