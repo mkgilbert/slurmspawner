@@ -175,7 +175,7 @@ class SlurmSpawner(Spawner):
         If so, it returns the jobid
         """
         self.log.debug("Querying Slurm for user '%s' with jobname '%s'" % (user, jobname))
-        cmd = 'squeue -h -u %s --name=%s -O jobid,comment,reason' % (user, jobname)
+        cmd = 'squeue -h -u %s --name=%s -O jobid,comment,state,reason' % (user, jobname)
         self.log.debug("running command '%s'" % cmd)
         output = run_command(cmd).strip()
         output_list = output.split()
@@ -183,11 +183,12 @@ class SlurmSpawner(Spawner):
         if len(output_list) > 0:
             jobid = output_list[0]
             port = output_list[1]
-            reason = output_list[2:]
+            state = output_list[2]
+            reason = output_list[3:]
         else:
-            return ("", "", "")
+            return ("", "", "", "")
         self.log.debug("Query found jobid '%s'" % (jobid))
-        return (jobid, port, reason)
+        return (jobid, port, state, reason)
 
     @gen.coroutine
     def run_jupyterhub_singleuser(self, cmd, port, user):
@@ -353,7 +354,7 @@ $cmd
         """Start the process"""
         self.log.debug("Running start() method...")
         # first check if the user has a spawner running somewhere on the server
-        jobid, port, reason = self.query_slurm_by_jobname(self.user.name, self.job_name)
+        jobid, port, state, reason = self.query_slurm_by_jobname(self.user.name, self.job_name)
 
         if "failed" in reason:  # e.g. "launch failed requeued held" means it'll never start. clear everything
             self.log.error("'failed' was found in squeue 'reason' output for job %s. Running scancel..." % self.slurm_job_id)
@@ -361,6 +362,11 @@ $cmd
             self.clear_state()
             #self.db.commit()
             raise SlurmException("Slurm failed to launch job")
+
+        if state == "COMPLETING":
+            self.log.debug("job %s still completing. Resetting jobid and port to empty string so new job will start.")
+            jobid = ""
+            port = ""
 
         self.slurm_job_id = jobid
         self.user.server.port = port
