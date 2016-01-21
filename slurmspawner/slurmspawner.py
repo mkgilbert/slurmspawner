@@ -259,7 +259,7 @@ $cmd
                                                     port=port,
                                                     user=user,
                                                     gid=gid))
-        ########## TESTING ##########
+        ########## HASH FILE CREATION (to make sure Slurm users can't abuse the QOS if it has high prio ##########
         # before we submit this job, we need to create a tmp file that will serve as a hash file that
         # slurm can check. If the hash value is wrong, it will know that this script did not submit the job
         # and will therefore not change any settings (this is because we are using a job_submit.lua script
@@ -283,7 +283,7 @@ $cmd
         hash = str(sum)
         hash_file.write(hash)
         hash_file.close()
-        ###### END TESTING ##########
+        ###### END HASH FILE CREATION ##########
 
         if self.run_with_sudo:
             self.log.debug("Running sbatch with sudo privileges")
