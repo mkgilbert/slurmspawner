@@ -166,6 +166,7 @@ class SlurmSpawner(Spawner):
             if "failed" in reason:
                 self.log.debug("'failed' was found in reason for pending. Marking job as FAILED")
                 out = "FAILED"
+
         self.log.debug("Notebook server for user %s: Slurm jobid %s status: %s" % (self.user.name, self.slurm_job_id, out))
         return out
         
@@ -294,14 +295,13 @@ $cmd
         popen = subprocess.Popen(cmd,
                                  shell=True, stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE)
-        output = popen.communicate(slurm_script.encode())[0].strip() #e.g. something like "Submitted batch job 209"
-        output = output.decode() # convert bytes object to string
+        output = popen.communicate(slurm_script.encode())[0].strip()  # e.g. something like "Submitted batch job 209"
+        output = output.decode()  # convert bytes object to string
 
         if output == "" or len(output) == 0:
             error = "Slurm did not attempt to start the job! Check Slurm logs"
             self.log.error(error)
             raise SlurmException(error)
-
 
         self.log.debug("Stdout of trying to launch with sbatch: %s" % output)
         self.slurm_job_id = output.split(' ')[-1] # the job id should be the very last part of the string
@@ -356,13 +356,6 @@ $cmd
         # first check if the user has a spawner running somewhere on the server
         jobid, port, state, reason = self.query_slurm_by_jobname(self.user.name, self.job_name)
 
-        if "failed" in reason:  # e.g. "launch failed requeued held" means it'll never start. clear everything
-            self.log.error("'failed' was found in squeue 'reason' output for job %s. Running scancel..." % self.slurm_job_id)
-            self._stop_slurm_job()
-            self.clear_state()
-            #self.db.commit()
-            raise SlurmException("Slurm failed to launch job")
-
         if state == "COMPLETING":
             self.log.debug("job %s still completing. Resetting jobid and port to empty string so new job will start.")
             jobid = ""
@@ -371,10 +364,18 @@ $cmd
         self.slurm_job_id = jobid
         self.user.server.port = port
 
+        if "failed" in reason:  # e.g. "launch failed requeued held" means it'll never start. clear everything
+            self.log.error("'failed' was found in squeue 'reason' output for job %s. Running scancel..." % self.slurm_job_id)
+            self._stop_slurm_job()
+            self.clear_state()
+            self.user.spawn_pending = False
+            self.db.commit()
+            raise SlurmException("Slurm failed to launch job")
+
         if jobid != "" and port != "":
             self.log.debug("*** STARTED SERVER *** Server was found running with slurm jobid '%s' \
                             for user '%s' on port %s" % (jobid, self.user.name, port)) 
-            node_ip, node_name  = self.get_slurm_job_info(jobid)
+            node_ip, node_name = self.get_slurm_job_info(jobid)
             self.user.server.ip = node_ip
             return
 
@@ -413,6 +414,8 @@ $cmd
                 else:
                     self.log.debug("Job found to be %s. Clearing state for %s" % (state, self.user.name))
                     self._stop_slurm_job()
+                    self.user.spawn_pending = False
+                    self.db.commit()
 
                 self.clear_state()
                 return 127
