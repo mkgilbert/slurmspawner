@@ -1,11 +1,14 @@
-#slurmspawner for Jupyterhub
+# slurmspawner for Jupyterhub
+
 This is a custom spawner for Jupyterhub that is designed for installations on clusters using Slurm scheduling software. Some of the code and inspiration for this came directly from [Andrea Zonca's blog post](http://zonca.github.io/2015/04/jupyterhub-hpc.html 'Run jupyterhub on a Supercomputer') where he explains his implementation for a spawner that uses SSH and Torque. His github repo is found [here](http://www.github.com/zonca/remotespawner 'RemoteSpawner'). 
 
-##Dependencies
+## Dependencies
+
 - This spawner creates slurm jobs when users log in, so it must be installed in an environment running Slurm.
 - Also, jupyterhub and its dependencies must be installed. See [the jupyterhub readme](https://github.com/jupyter/jupyterhub/blob/master/README.md) for instructions on setting up jupyterhub
 
-##Installation
+## Installation
+
 1. from root directory of this repo (where setup.py is), run `pip install -e .`
 2. add lines in jupyterhub_config.py 
    
@@ -14,7 +17,8 @@ This is a custom spawner for Jupyterhub that is designed for installations on cl
       c.JupyterHub.spawner_class = 'slurmspawner.SlurmSpawner'
    ```
 
-##Configuration
+## Configuration
+
 There are several values you can set in jupyterhub_config.py that override the default Slurm SBATCH options that get submitted by SlurmSpawner. Currently, the variables you can change are:
 - job_name (String)
 - partition (String)
@@ -40,7 +44,8 @@ Now just add
 ```
 to your jupyterhub_config.py file and that's it! When you run jupyterhub and a user logs in, it will set the path and soft links every time.
 
-##Logging
+## Logging
+
 There is quite verbose debug logging in SlurmSpawner (probably too verbose), so when testing this out it might help to set `c.Spawner.debug = True` in jupyterhub_config.py. This way you can see exactly what script is being sent to Slurm, and the jobid and status of all running servers each time they are polled.
 
 
